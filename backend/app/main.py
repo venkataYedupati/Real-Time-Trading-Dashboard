@@ -3,12 +3,13 @@ import asyncio
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
+from .database import PersistenceStore
 from .models import OrderRequest, SymbolSelection
 from .simulator import TradingSimulator
 
 
 app = FastAPI(title="Real-Time Trading Dashboard API", version="0.1.0")
-simulator = TradingSimulator()
+simulator = TradingSimulator(persistence=PersistenceStore.from_env())
 
 app.add_middleware(
     CORSMiddleware,
@@ -21,7 +22,11 @@ app.add_middleware(
 
 @app.get("/health")
 def health() -> dict:
-    return {"status": "ok", "service": "trading-dashboard-api"}
+    return {
+        "status": "ok",
+        "service": "trading-dashboard-api",
+        "persistence": "database" if simulator.persistence else "memory",
+    }
 
 
 @app.get("/api/snapshot")

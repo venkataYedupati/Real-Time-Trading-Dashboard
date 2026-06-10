@@ -8,7 +8,7 @@ import uuid
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Deque, Dict, List, Optional, Tuple
+from typing import Any, Deque, Dict, List, Optional, Tuple
 
 from .models import OrderRequest
 
@@ -66,7 +66,8 @@ class Position:
 
 
 class TradingSimulator:
-    def __init__(self) -> None:
+    def __init__(self, persistence: Optional[Any] = None) -> None:
+        self.persistence = persistence
         self.rng = random.Random(20260610)
         self.symbols: Dict[str, SymbolState] = {
             "AAPL": SymbolState("AAPL", "Apple", 203.18, 200.75, 9.5, 18_450_000),
@@ -93,6 +94,14 @@ class TradingSimulator:
         self.last_rate_window = self.last_tick
         self.window_events = 0
         self.starting_equity = self._equity(mark_to_market=False)
+
+        if self.persistence:
+            self.persistence.bootstrap_defaults(
+                cash=self.cash,
+                starting_equity=self.starting_equity,
+                positions=self._position_records(),
+            )
+            self._load_persisted_state()
 
         for symbol in self.symbols.values():
             self._refresh_book(symbol)
@@ -153,6 +162,11 @@ class TradingSimulator:
         client_order_id = request.client_order_id
         if client_order_id and client_order_id in self.deduped_orders:
             return self.deduped_orders[client_order_id]
+        if client_order_id and self.persistence:
+            persisted_response = self.persistence.find_response_by_client_order_id(client_order_id)
+            if persisted_response:
+                self.deduped_orders[client_order_id] = persisted_response
+                return persisted_response
 
         if symbol not in self.symbols:
             return {"accepted": False, "reason": "Unknown symbol", "order": None, "fill": None}
@@ -186,6 +200,7 @@ class TradingSimulator:
             self.open_orders[str(order["id"])] = order
 
         self.recent_orders.appendleft(order.copy())
+        self._persist_execution(order, fill)
         response = {"accepted": True, "reason": None, "order": order, "fill": fill}
         if client_order_id:
             self.deduped_orders[client_order_id] = response
@@ -272,6 +287,7 @@ class TradingSimulator:
                 order["remaining_quantity"] = 0
                 filled_order_ids.append(order_id)
                 self.recent_orders.appendleft(order.copy())
+                self._persist_execution(order, fill)
 
         for order_id in filled_order_ids:
             self.open_orders.pop(order_id, None)
@@ -281,6 +297,45 @@ class TradingSimulator:
         self.cash += -cash_delta if side == "BUY" else cash_delta
         position = self.positions.setdefault(symbol, Position(symbol, 0, 0.0))
         position.apply_fill(side, quantity, price)
+
+    def _load_persisted_state(self) -> None:
+        state = self.persistence.load_state()
+        self.cash = state.cash
+        self.starting_equity = state.starting_equity
+        self.positions = {
+            symbol: Position(
+                symbol=symbol,
+                quantity=int(position["quantity"]),
+                avg_cost=float(position["avg_cost"]),
+                realized_pnl=float(position["realized_pnl"]),
+            )
+            for symbol, position in state.positions.items()
+        }
+        self.open_orders = state.open_orders
+        self.recent_orders = deque(state.recent_orders, maxlen=24)
+        self.recent_fills = deque(state.recent_fills, maxlen=18)
+        self.deduped_orders = state.deduped_orders
+
+    def _persist_execution(self, order: Dict[str, object], fill: Optional[Dict[str, object]]) -> None:
+        if not self.persistence:
+            return
+        self.persistence.save_execution(
+            order=order,
+            fill=fill,
+            cash=self.cash,
+            positions=self._position_records(),
+        )
+
+    def _position_records(self) -> List[Dict[str, object]]:
+        return [
+            {
+                "symbol": position.symbol,
+                "quantity": position.quantity,
+                "avg_cost": position.avg_cost,
+                "realized_pnl": position.realized_pnl,
+            }
+            for position in self.positions.values()
+        ]
 
     def _best_execution_price(self, symbol: str, side: str) -> float:
         book = self.symbols[symbol]
