@@ -4,6 +4,10 @@ A full-stack trading dashboard that shows live-changing market data, an order bo
 
 ![Real-Time Trading Dashboard](screenshots/dashboard-desktop.png)
 
+## Project Description
+
+Real-Time Trading Dashboard is a full-stack trading-system MVP built with FastAPI, React, TypeScript, WebSockets, PostgreSQL, and Docker Compose. It streams simulated market data, displays live order book depth, supports market and limit orders, tracks portfolio P&L, persists orders and fills, and calculates risk metrics in real time.
+
 This project is built to be easy to run locally. Docker Compose starts the frontend, backend, and PostgreSQL database together. You do not need Kafka, Redis, or a paid market-data API to demo it.
 
 ## What Is Real
